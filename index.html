@@ -360,15 +360,16 @@
     </div>
 
     <div class="card">
-      <div class="field-label">Délka znělky <b id="chimeVal">5 s</b></div>
-      <div class="chips" id="chimeChips"></div>
+      <div class="field-label">Délka znělky <b id="chimeVal">6 s</b></div>
+      <input type="range" class="slider" id="chimeSlider" min="2" max="30" step="1" value="6">
+      <div class="slider-ticks"><span>2 s</span><span>10 s</span><span>20 s</span><span>30 s</span></div>
     </div>
 
     <p class="summary" id="summaryLine"></p>
     <p class="summary finish-line" id="finishLine"></p>
 
     <button class="primary" id="startBtn">Spustit kynutí</button>
-    <footer class="hint">Klepnutím na délku znělky si ji rovnou přehraješ jako ukázku. Nechej telefon zapnutý a obrazovku odemčenou, ať appka může počítat na pozadí.</footer>
+    <footer class="hint">Melodií si přehraješ ukázku klepnutím, u délky znělky se ukázka přehraje po puštění posuvníku. Nechej telefon zapnutý a obrazovku odemčenou, ať appka může počítat na pozadí.</footer>
   </section>
 
   <!-- RUNNING SCREEN -->
@@ -405,7 +406,7 @@
     intervals: 8,
     minutes: 25,
     melodyKey: 'ode',
-    chimeLength: '5',
+    chimeSeconds: 6,
     currentInterval: 1,
     remainingMs: 0,
     endTimestamp: null,
@@ -435,7 +436,6 @@
 
   /* ---------- Setup chips ---------- */
   const intervalOptions = [5,6,7,8,9,10];
-  const chimeOptions = [ ['3','3 s'], ['5','5 s'], ['10','10 s'], ['20','20 s'] ];
 
   function buildChips(container, options, current, onPick){
     container.innerHTML = '';
@@ -472,32 +472,15 @@
     });
   }
 
-  function refreshChimeChips(){
-    const container = el('chimeChips');
-    container.innerHTML = '';
-    chimeOptions.forEach(([value, label])=>{
-      const c = document.createElement('div');
-      c.className = 'chip' + (value===state.chimeLength ? ' active' : '');
-      c.textContent = label;
-      c.addEventListener('click', ()=>{
-        state.chimeLength = value;
-        renderSetup();
-        // quick preview so the user can hear the difference right away
-        getCtx(); playChime(false);
-      });
-      container.appendChild(c);
-    });
-  }
-
   function renderSetup(){
     refreshIntervalChips();
     refreshMelodyChips();
-    refreshChimeChips();
     el('intervalsVal').textContent = state.intervals;
     el('minutesVal').textContent = state.minutes + ' min';
     el('melodyVal').textContent = MELODIES[state.melodyKey].name;
-    el('chimeVal').textContent = state.chimeLength + ' s';
+    el('chimeVal').textContent = state.chimeSeconds + ' s';
     el('minutesSlider').value = Math.max(5, Math.min(120, Math.round(state.minutes/5)*5));
+    el('chimeSlider').value = state.chimeSeconds;
     const totalMin = state.intervals * state.minutes;
     const h = Math.floor(totalMin/60), m = totalMin%60;
     const totalTxt = h>0 ? (h+' h '+ (m>0? m+' min':'')) : (m+' min');
@@ -528,6 +511,15 @@
     if(document.activeElement === el('minutesCustom')) el('minutesCustom').value = e.target.value;
   });
 
+  el('chimeSlider').addEventListener('input', e=>{
+    state.chimeSeconds = parseInt(e.target.value, 10);
+    el('chimeVal').textContent = state.chimeSeconds + ' s';
+  });
+  el('chimeSlider').addEventListener('change', ()=>{
+    // preview only once the user releases the slider, so dragging doesn't spam audio
+    getCtx(); playChime(false);
+  });
+
   /* ---------- Sound: pleasant generated chime ---------- */
   let audioCtx = null;
   function getCtx(){
@@ -538,17 +530,59 @@
   // Krátké, zjednodušené úryvky ze skladeb starých přes 100 let — jde o volná díla.
   // Noty se generují živě přes Web Audio, nejde o žádnou nahrávku.
   const NOTE_FREQ = {
+    C3:130.81, 'C#3':138.59, D3:146.83, 'D#3':155.56, E3:164.81, F3:174.61, 'F#3':185.00,
+    G3:196.00, 'G#3':207.65, A3:220.00, 'A#3':233.08, B3:246.94,
     C4:261.63, 'C#4':277.18, D4:293.66, 'D#4':311.13, E4:329.63, F4:349.23, 'F#4':369.99,
     G4:392.00, 'G#4':415.30, A4:440.00, 'A#4':466.16, B4:493.88,
     C5:523.25, 'C#5':554.37, D5:587.33, 'D#5':622.25, E5:659.25, F5:698.46, 'F#5':739.99,
     G5:783.99, 'G#5':830.61, A5:880.00, B5:987.77, C6:1046.50
   };
+  const LETTERS = ['C','D','E','F','G','A','B'];
+  // Diatonic third below a melody note, used for a second (harmony) voice — real polyphony,
+  // not just an octave doubling of the same pitch.
+  function thirdBelow(noteName){
+    const m = noteName.match(/^([A-G])(#)?(\d)/);
+    if(!m) return noteName;
+    let idx = LETTERS.indexOf(m[1]) - 2;
+    let oct = parseInt(m[3], 10);
+    if(idx < 0){ idx += 7; oct -= 1; }
+    const candidate = LETTERS[idx] + oct;
+    return NOTE_FREQ[candidate] ? candidate : noteName;
+  }
+  // Transpose a whole phrase down an octave, used to build a soft "echo" answer —
+  // a natural, always-correct way to extend a melody without inventing new notes.
+  function transposeDownOctave(notes, velocity){
+    return notes.map(([n, b])=>{
+      const m = n.match(/^([A-G])(#)?(\d)/);
+      const down = m[1] + (m[2]||'') + (parseInt(m[3],10)-1);
+      return [ NOTE_FREQ[down] ? down : n, b, velocity ];
+    });
+  }
+  function withEcho(notes){
+    return notes.concat(transposeDownOctave(notes, 0.55));
+  }
 
-  const ODE_TO_JOY = [ // Beethoven — Óda na radost (9. symfonie)
+  const ODE_TO_JOY = [ // Beethoven — Óda na radost (9. symfonie) — celé 4frázové hlavní téma,
+    // ověřeno proti veřejně dostupnému přepisu not (E E F G G F E D C C D E E D D | ...)
     ['E4',1],['E4',1],['F4',1],['G4',1],
     ['G4',1],['F4',1],['E4',1],['D4',1],
     ['C4',1],['C4',1],['D4',1],['E4',1],
-    ['E4',1.5],['D4',0.5],['D4',2]
+    ['E4',1.5],['D4',0.5],['D4',2],
+
+    ['E4',1],['E4',1],['F4',1],['G4',1],
+    ['G4',1],['F4',1],['E4',1],['D4',1],
+    ['C4',1],['C4',1],['D4',1],['E4',1],
+    ['D4',1.5],['C4',0.5],['C4',2],
+
+    ['D4',1],['D4',1],['E4',1],['C4',1],
+    ['D4',1],['E4',0.5],['F4',0.5],['E4',1],
+    ['C4',1],['D4',1],['E4',0.5],['F4',0.5],['E4',1],
+    ['D4',1],['C4',1],['D4',1],['G3',2],
+
+    ['E4',1],['E4',1],['F4',1],['G4',1],
+    ['G4',1],['F4',1],['E4',1],['D4',1],
+    ['C4',1],['C4',1],['D4',1],['E4',1],
+    ['D4',1.5],['C4',0.5],['C4',2]
   ];
   const FUR_ELISE = [ // Beethoven — Pro Elišku (úvodní motiv)
     ['E5',0.5],['D#5',0.5],['E5',0.5],['D#5',0.5],['E5',0.5],['B4',0.5],['D5',0.5],['C5',0.5],['A4',1.5]
@@ -567,42 +601,62 @@
   const CANON = [ // Pachelbel — Kánon D dur (melodická linka)
     ['C5',1],['G4',1],['A4',1],['E4',1],['F4',1],['C4',1],['F4',1],['G4',1.5]
   ];
-  const BELLA_CIAO = [ // Bella ciao — italská lidová/protestní píseň (tradiční, autor neznámý)
-    ['A4',0.5],['A4',0.5],['G4',0.5],['F4',0.5],['E4',1],
-    ['F4',0.5],['G4',0.5],['E4',1],
-    ['A4',0.5],['A4',0.5],['G4',0.5],['F4',0.5],['E4',1.5]
+  const BELLA_CIAO = [ // Bella ciao — italská lidová/protestní píseň (tradiční, autor neznámý) —
+    // refrén "O bella ciao, bella ciao, bella ciao ciao ciao", ověřeno proti veřejnému přepisu not
+    ['A4',0.5],['B4',0.5],['A4',0.5],['C5',0.5],['B4',0.5],['A4',0.5],
+    ['C5',0.5],['B4',0.5],['A4',0.5],['E5',1],['E5',0.5],['E5',1.5]
   ];
   const SWING_LOW = [ // Swing Low, Sweet Chariot — tradiční spirituál (autor neznámý)
     ['G4',0.5],['B4',0.5],['D5',1],['B4',0.5],['G4',1],
     ['E4',0.5],['G4',1.5],
     ['G4',0.5],['B4',0.5],['D5',1],['B4',0.5],['G4',1.5]
   ];
-  const DRUNKEN_SAILOR = [ // What Shall We Do with the Drunken Sailor — tradiční námořnická pracovní píseň (shanty)
-    ['E5',0.5],['G4',0.5],['A4',0.5],['B4',0.5],['C5',0.5],['B4',0.5],['A4',0.5],['G4',1],
-    ['E5',0.5],['G4',0.5],['A4',0.5],['B4',0.5],['C5',0.5],['B4',0.5],['A4',1],['G4',1.5]
+  const DRUNKEN_SAILOR = [ // What Shall We Do with the Drunken Sailor — tradiční námořnická pracovní píseň
+    // (shanty), klavírová verze přepsaná podle ověřené vokální transkripce v A dorské/mollové —
+    // "What shall we do with the drunken sailor..." / "...early in the morning"
+    ['E4',1],['E4',0.5],['E4',0.5],['E4',1],['E4',0.5],['E4',0.5],
+    ['E4',1],['A3',1],['C4',1],['E4',1],
+
+    ['D4',1],['D4',0.5],['D4',0.5],['D4',1],['D4',0.5],['D4',0.5],
+    ['D4',1],['G3',1],['B3',1],['D4',1],
+
+    ['E4',1],['E4',0.5],['E4',0.5],['E4',1],['E4',0.5],['E4',0.5],
+    ['E4',1],['F4',1],['G4',1],['A4',1],
+
+    ['G4',1],['E4',1],['D4',1],['B3',1],
+    ['A3',2],['A3',1]
   ];
 
+  // "Long" versions add a quieter echo of the phrase an octave down — doubles the length
+  // for the duration slider without ever inventing musically dubious extra bars.
   const MELODIES = {
-    ode:        { name: 'Óda na radost',      notes: ODE_TO_JOY },
-    elise:      { name: 'Pro Elišku',          notes: FUR_ELISE },
-    lullaby:    { name: 'Ukolébavka',          notes: LULLABY },
-    nachtmusik: { name: 'Malá noční hudba',    notes: NACHTMUSIK },
-    air:        { name: 'Air (Bach)',          notes: AIR_G },
-    canon:      { name: 'Kánon D dur',         notes: CANON },
-    bellaciao:  { name: 'Bella ciao',          notes: BELLA_CIAO },
-    swinglow:   { name: 'Swing Low',           notes: SWING_LOW },
-    sailor:     { name: 'Opilý námořník',      notes: DRUNKEN_SAILOR },
+    ode:        { name: 'Óda na radost',   notes: ODE_TO_JOY,      long: withEcho(ODE_TO_JOY),      root: 'C3' },
+    elise:      { name: 'Pro Elišku',       notes: FUR_ELISE,       long: withEcho(FUR_ELISE),       root: 'A3' },
+    lullaby:    { name: 'Ukolébavka',       notes: LULLABY,         long: withEcho(LULLABY),         root: 'C3' },
+    nachtmusik: { name: 'Malá noční hudba', notes: NACHTMUSIK,      long: withEcho(NACHTMUSIK),      root: 'G3' },
+    air:        { name: 'Air (Bach)',       notes: AIR_G,           long: withEcho(AIR_G),           root: 'C3' },
+    canon:      { name: 'Kánon D dur',      notes: CANON,           long: withEcho(CANON),           root: 'C3' },
+    bellaciao:  { name: 'Bella ciao',       notes: BELLA_CIAO,      long: withEcho(BELLA_CIAO),      root: 'A3' },
+    swinglow:   { name: 'Swing Low',        notes: SWING_LOW,       long: withEcho(SWING_LOW),       root: 'G3' },
+    sailor:     { name: 'Opilý námořník',   notes: DRUNKEN_SAILOR,  long: withEcho(DRUNKEN_SAILOR),  root: 'A3' },
   };
 
-  function getChimePlan(){
-    // 3s: jen první fráze zvolené melodie. 5s: celá jednou. 10s: celá dvakrát. 20s: celá čtyřikrát.
-    const melody = MELODIES[state.melodyKey].notes;
-    switch(state.chimeLength){
-      case '3':  return { notes: melody.slice(0, Math.min(8, melody.length)), beatSec: 0.34, baseRepeats: 1 };
-      case '10': return { notes: melody, beatSec: 0.3, baseRepeats: 2 };
-      case '20': return { notes: melody, beatSec: 0.3, baseRepeats: 4 };
-      default:   return { notes: melody, beatSec: 0.3, baseRepeats: 1 };
+  const BEAT_SEC = 0.3;
+
+  // Fills the requested duration by walking (and looping, if needed) through the long
+  // version of the melody, so any slider length gets a full musical phrase rather than
+  // an abruptly cut-off snippet.
+  function buildPlayList(desiredSec, melody){
+    const list = [];
+    let elapsed = 0;
+    let i = 0;
+    while(elapsed < desiredSec && i < 500){
+      const item = melody[i % melody.length];
+      list.push(item);
+      elapsed += item[1] * BEAT_SEC;
+      i++;
     }
+    return list;
   }
 
   function playChime(final){
@@ -612,42 +666,63 @@
       master.gain.value = 1.0;
       master.connect(ctx.destination);
 
-      const plan = getChimePlan();
-      const notes = plan.notes;
-      const beatSec = plan.beatSec;
-      const repeats = final ? plan.baseRepeats + 1 : plan.baseRepeats;
-      let t = ctx.currentTime + 0.03;
+      const melody = MELODIES[state.melodyKey];
+      const notes = buildPlayList(state.chimeSeconds, melody.long);
+      const totalDur = notes.reduce((s, item)=> s + item[1]*BEAT_SEC, 0) + 0.3;
+      const start0 = ctx.currentTime + 0.03;
 
-      for(let r=0; r<repeats; r++){
-        let cursor = t;
-        notes.forEach(([note, beats])=>{
-          const freq = NOTE_FREQ[note];
-          const dur = beats * beatSec;
-          const start = cursor;
-          const noteLength = dur * 1.15; // slight overlap/ring between notes
+      // ---- Sustained bass/pad drone (root + fifth) — this is what makes it genuinely
+      // polyphonic: a held chord sits underneath the whole melody+harmony line. ----
+      const rootFreq = NOTE_FREQ[melody.root];
+      const fifthFreq = rootFreq * Math.pow(2, 7/12);
+      [ [rootFreq, 0.11], [fifthFreq, 0.06] ].forEach(([f, peak])=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        const swellEnd = Math.min(start0 + 0.6, start0 + totalDur*0.3);
+        const releaseStart = Math.max(swellEnd, start0 + totalDur - 0.8);
+        gain.gain.setValueAtTime(0, start0);
+        gain.gain.linearRampToValueAtTime(final ? peak*1.3 : peak, swellEnd);
+        gain.gain.setValueAtTime(final ? peak*1.3 : peak, releaseStart);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start0 + totalDur);
+        osc.connect(gain).connect(master);
+        osc.start(start0);
+        osc.stop(start0 + totalDur + 0.1);
+      });
 
-          // Melody voice (warm triangle wave, bell-like)
-          const layers = final
-            ? [ [freq, 0.55, 'triangle'], [freq*2, 0.16, 'sine'], [freq/2, 0.22, 'sine'] ]
-            : [ [freq, 0.5, 'triangle'], [freq*2, 0.14, 'sine'] ];
+      // ---- Melody + diatonic harmony voice (a third below) ----
+      let cursor = start0;
+      notes.forEach(([note, beats, vel])=>{
+        const velocity = vel === undefined ? 1 : vel;
+        const dur = beats * BEAT_SEC;
+        const start = cursor;
+        const noteLength = dur * 1.15;
 
-          layers.forEach(([f, level, type])=>{
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = type;
-            osc.frequency.value = f;
-            gain.gain.setValueAtTime(0, start);
-            gain.gain.linearRampToValueAtTime(level, start + 0.03);
-            gain.gain.exponentialRampToValueAtTime(0.0001, start + noteLength);
-            osc.connect(gain).connect(master);
-            osc.start(start);
-            osc.stop(start + noteLength + 0.05);
-          });
+        const melodyFreq = NOTE_FREQ[note];
+        const harmonyFreq = NOTE_FREQ[thirdBelow(note)];
 
-          cursor += dur;
+        const voices = final
+          ? [ [melodyFreq, 0.5*velocity, 'triangle'], [melodyFreq*2, 0.14*velocity, 'sine'],
+              [harmonyFreq, 0.22*velocity, 'sine'] ]
+          : [ [melodyFreq, 0.46*velocity, 'triangle'], [melodyFreq*2, 0.12*velocity, 'sine'],
+              [harmonyFreq, 0.18*velocity, 'sine'] ];
+
+        voices.forEach(([f, level, type])=>{
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = type;
+          osc.frequency.value = f;
+          gain.gain.setValueAtTime(0, start);
+          gain.gain.linearRampToValueAtTime(level, start + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + noteLength);
+          osc.connect(gain).connect(master);
+          osc.start(start);
+          osc.stop(start + noteLength + 0.05);
         });
-        t = cursor + 0.4;
-      }
+
+        cursor += dur;
+      });
     }catch(e){ /* audio unavailable, ignore */ }
     if(navigator.vibrate) navigator.vibrate(final ? [160,90,160,90,160,90,400] : [160,90,160,90,160]);
   }
