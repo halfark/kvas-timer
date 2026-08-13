@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>Kvas — časovač kynutí</title>
+<style>
+  :root{
+    --bg: #1F1611;
+    --bg-2: #150F0B;
+    --surface: #2C2119;
+    --surface-2: #382A1E;
+    --flour: #F1E6D3;
+    --flour-dim: #C9BBA3;
+    --crust: #A85C32;
+    --crust-light: #C8763F;
+    --gold: #D9A441;
+    --olive: #7A8A5C;
+    --danger: #B5533C;
+    --radius: 22px;
+    --font-display: Cambria, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+    --font-body: 'Work Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background: radial-gradient(120% 90% at 50% -10%, #3A2A1B 0%, var(--bg) 55%, var(--bg-2) 100%);
+    color: var(--flour);
+    font-family: var(--font-body);
+    min-height:100dvh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:flex-start;
+    padding: calc(env(safe-area-inset-top) + 20px) 18px calc(env(safe-area-inset-bottom) + 24px);
+    overflow-x:hidden;
+  }
+
+  .wrap{ width:100%; max-width: 440px; display:flex; flex-direction:column; align-items:stretch; gap:22px; }
+
+  header.top{ text-align:center; margin-top: 6px; }
+  .eyebrow{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin: 0 0 6px;
+  }
+  h1{
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1;
+    margin: 0;
+    letter-spacing: .01em;
+    color: var(--flour);
+  }
+  h1 span{ color: var(--crust-light); font-style: italic; }
+  .sub{ color: var(--flour-dim); font-size: 14.5px; margin-top: 8px; line-height:1.45; }
+
+  /* ---------- Jar signature element ---------- */
+  .jar-stage{
+    position:relative;
+    width: 100%;
+    display:flex;
+    justify-content:center;
+    padding: 6px 0 2px;
+  }
+  .jar{ position:relative; width: 168px; height: 200px; }
+  .jar svg{ position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+  #jarFillRect, #jarFillSheen{
+    transition: y .4s cubic-bezier(.4,0,.2,1), height .4s cubic-bezier(.4,0,.2,1);
+  }
+  @media (prefers-reduced-motion: reduce){
+    #jarFillRect, #jarFillSheen{ transition:none; }
+  }
+  .bubble{
+    position:absolute;
+    bottom:0;
+    width: 6px; height:6px;
+    border-radius:50%;
+    background: rgba(241,230,211,.55);
+    animation: rise 4.2s linear infinite;
+    opacity:0;
+  }
+  @keyframes rise{
+    0%{ transform: translateY(0) scale(.6); opacity:0; }
+    12%{ opacity:.9; }
+    90%{ opacity:.25; }
+    100%{ transform: translateY(-150px) scale(1.1); opacity:0; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .bubble{ animation: none; display:none; }
+  }
+
+  /* ---------- Cards / controls ---------- */
+  .card{
+    background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+    border: 1px solid rgba(241,230,211,.08);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .field-label{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--flour-dim);
+    margin-bottom: 10px;
+    display:flex;
+    justify-content:space-between;
+  }
+  .field-label b{ color: var(--gold); font-weight:600; letter-spacing:0; text-transform:none; font-size:12.5px; }
+
+  .chips{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom: 10px; }
+  .chips.wide .chip{ flex: 1 1 45%; font-size: 13.5px; padding: 11px 8px; line-height:1.25; }
+  .chip{
+    flex: 1 1 auto;
+    min-width: 46px;
+    text-align:center;
+    padding: 11px 6px;
+    border-radius: 12px;
+    background: rgba(241,230,211,.05);
+    border: 1px solid rgba(241,230,211,.10);
+    color: var(--flour);
+    font-size: 15px;
+    font-weight:600;
+    cursor:pointer;
+    user-select:none;
+    transition: background .15s, border-color .15s, transform .1s;
+  }
+  .chip:active{ transform: scale(.96); }
+  .chip.active{
+    background: var(--crust);
+    border-color: var(--crust-light);
+    color: #1A1109;
+  }
+  .slider{
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(241,230,211,.10);
+    outline: none;
+    margin: 6px 0 14px;
+  }
+  .slider::-webkit-slider-thumb{
+    -webkit-appearance: none;
+    appearance: none;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, var(--crust-light), var(--crust));
+    border: 3px solid var(--flour);
+    box-shadow: 0 4px 10px -2px rgba(0,0,0,.6);
+    cursor: pointer;
+    margin-top: -1px;
+  }
+  .slider::-moz-range-thumb{
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, var(--crust-light), var(--crust));
+    border: 3px solid var(--flour);
+    box-shadow: 0 4px 10px -2px rgba(0,0,0,.6);
+    cursor: pointer;
+  }
+  .slider::-moz-range-track{ height:6px; border-radius:999px; background: rgba(241,230,211,.10); }
+  .slider-ticks{
+    display:flex; justify-content:space-between;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: rgba(241,230,211,.35);
+    margin-top: -10px;
+    margin-bottom: 12px;
+  }
+
+  .custom-row{ display:flex; align-items:center; gap:10px; margin-top:2px; }
+  .custom-row input{
+    width: 100%;
+    background: rgba(0,0,0,.22);
+    border: 1px solid rgba(241,230,211,.14);
+    border-radius: 12px;
+    padding: 11px 12px;
+    color: var(--flour);
+    font-family: var(--font-mono);
+    font-size: 15px;
+  }
+  .custom-row input:focus{ outline: 2px solid var(--gold); outline-offset: 1px; }
+  .custom-row span{ color: var(--flour-dim); font-size: 13px; white-space:nowrap; }
+
+  .summary{
+    text-align:center;
+    color: var(--flour-dim);
+    font-size: 13.5px;
+    line-height:1.5;
+  }
+  .summary b{ color: var(--flour); }
+  .finish-line{ color: var(--gold); font-weight:600; margin-top:-8px; }
+
+  button.primary{
+    width:100%;
+    padding: 17px;
+    border-radius: 16px;
+    border: none;
+    background: linear-gradient(180deg, var(--crust-light), var(--crust));
+    color: #1A1109;
+    font-family: var(--font-display);
+    font-weight:700;
+    font-size: 19px;
+    letter-spacing:.01em;
+    cursor:pointer;
+    box-shadow: 0 10px 24px -10px rgba(168,92,50,.55);
+  }
+  button.primary:active{ transform: translateY(1px); }
+
+  .btn-row{ display:flex; gap:10px; }
+  button.ghost{
+    flex:1;
+    padding: 14px;
+    border-radius: 14px;
+    background: rgba(241,230,211,.06);
+    border: 1px solid rgba(241,230,211,.14);
+    color: var(--flour);
+    font-family: var(--font-body);
+    font-weight:600;
+    font-size: 15px;
+    cursor:pointer;
+  }
+  button.ghost.danger{ color: #F3C9BC; border-color: rgba(181,83,60,.4); background: rgba(181,83,60,.12); }
+  button.ghost:active{ transform: translateY(1px); }
+
+  /* ---------- Running screen ---------- */
+  .screen{ display:none; flex-direction:column; gap:22px; }
+  .screen.active{ display:flex; }
+
+  .interval-pill{
+    align-self:center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color: var(--gold);
+    border: 1px solid rgba(217,164,65,.35);
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(217,164,65,.08);
+  }
+
+  .timer{
+    text-align:center;
+    font-family: var(--font-mono);
+    font-size: 72px;
+    font-weight:600;
+    letter-spacing: .02em;
+    color: var(--flour);
+    line-height:1;
+    font-variant-numeric: tabular-nums;
+  }
+  .timer.pulse{ animation: pulse .6s ease-in-out; }
+  @keyframes pulse{ 0%{ color:var(--gold);} 100%{ color:var(--flour);} }
+
+  .progress-track{
+    width:100%; height:8px; border-radius:999px;
+    background: rgba(241,230,211,.08);
+    overflow:hidden;
+  }
+  .progress-fill{
+    height:100%; width:0%;
+    background: linear-gradient(90deg, var(--olive), var(--gold));
+    border-radius:999px;
+    transition: width .3s linear;
+  }
+
+  .toast{
+    position: fixed;
+    left: 50%; top: calc(env(safe-area-inset-top) + 18px);
+    transform: translateX(-50%) translateY(-140%);
+    background: var(--gold);
+    color: #1A1109;
+    font-weight:700;
+    font-family: var(--font-body);
+    padding: 12px 20px;
+    border-radius: 14px;
+    font-size: 14.5px;
+    box-shadow: 0 12px 30px -8px rgba(0,0,0,.5);
+    transition: transform .35s cubic-bezier(.34,1.56,.64,1);
+    z-index: 20;
+    white-space:nowrap;
+  }
+  .toast.show{ transform: translateX(-50%) translateY(0); }
+
+  footer.hint{
+    text-align:center;
+    color: rgba(241,230,211,.35);
+    font-size: 12px;
+    margin-top: 4px;
+    line-height:1.5;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <p class="eyebrow">domácí kváskový chleba</p>
+    <h1>K<span>vas</span> Timer</h1>
+    <p class="sub" id="subline">Nastav si opakované intervaly protahování a skládání těsta — na konci každého tě upozorní příjemná znělka.</p>
+  </header>
+
+  <div class="jar-stage">
+    <div class="jar" id="jar">
+      <svg viewBox="0 0 168 200" fill="none">
+        <defs>
+          <linearGradient id="fillGrad" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stop-color="#A85C32"/>
+            <stop offset="100%" stop-color="#D9A441"/>
+          </linearGradient>
+          <clipPath id="jarInterior">
+            <!-- interior of the jar body only (below the shoulder/neck), inset from the glass outline -->
+            <path d="M20 40 H148 V172 C148 187 138 192 128 192 H40 C30 192 20 187 20 172 Z"/>
+          </clipPath>
+        </defs>
+        <rect id="jarFillRect" x="20" y="192" width="128" height="0" fill="url(#fillGrad)" clip-path="url(#jarInterior)"/>
+        <rect id="jarFillSheen" x="20" y="192" width="128" height="3" fill="rgba(241,230,211,.3)" clip-path="url(#jarInterior)"/>
+        <path d="M40 8 H128 V26 C128 30 132 32 136 36 C150 50 154 66 154 86 V172 C154 187 142 196 128 196 H40 C26 196 14 187 14 172 V86 C14 66 18 50 32 36 C36 32 40 30 40 26 Z"
+          stroke="rgba(241,230,211,.55)" stroke-width="3" fill="rgba(241,230,211,.04)"/>
+        <path d="M40 8 H128 V22 H40 Z" fill="rgba(241,230,211,.12)" stroke="rgba(241,230,211,.4)" stroke-width="2"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- SETUP SCREEN -->
+  <section class="screen active" id="setupScreen">
+    <div class="card">
+      <div class="field-label">Počet intervalů <b id="intervalsVal">8</b></div>
+      <div class="chips" id="intervalChips"></div>
+      <div class="custom-row">
+        <input type="number" id="intervalsCustom" min="1" max="30" placeholder="vlastní počet">
+        <span>ks</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="field-label">Délka intervalu <b id="minutesVal">25 min</b></div>
+      <input type="range" class="slider" id="minutesSlider" min="5" max="120" step="5" value="25">
+      <div class="slider-ticks"><span>5</span><span>30</span><span>60</span><span>90</span><span>120 min</span></div>
+      <div class="custom-row">
+        <input type="number" id="minutesCustom" min="1" max="999" placeholder="nebo vlastní počet minut">
+        <span>min</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="field-label">Melodie znělky <b id="melodyVal">Óda na radost</b></div>
+      <div class="chips wide" id="melodyChips"></div>
+    </div>
+
+    <div class="card">
+      <div class="field-label">Délka znělky <b id="chimeVal">5 s</b></div>
+      <div class="chips" id="chimeChips"></div>
+    </div>
+
+    <p class="summary" id="summaryLine"></p>
+    <p class="summary finish-line" id="finishLine"></p>
+
+    <button class="primary" id="startBtn">Spustit kynutí</button>
+    <footer class="hint">Klepnutím na délku znělky si ji rovnou přehraješ jako ukázku. Nechej telefon zapnutý a obrazovku odemčenou, ať appka může počítat na pozadí.</footer>
+  </section>
+
+  <!-- RUNNING SCREEN -->
+  <section class="screen" id="runScreen">
+    <div class="interval-pill" id="intervalPill">Interval 1 z 8</div>
+    <div class="timer" id="timerDisplay">30:00</div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <p class="summary" id="runFinishLine"></p>
+
+    <div class="btn-row">
+      <button class="ghost" id="pauseBtn">Pauza</button>
+      <button class="ghost danger" id="stopBtn">Ukončit</button>
+    </div>
+    <footer class="hint">Po skončení intervalu zazní znělka a automaticky se spustí další.</footer>
+  </section>
+
+  <!-- DONE SCREEN -->
+  <section class="screen" id="doneScreen">
+    <div class="card" style="text-align:center;">
+      <p class="eyebrow" style="justify-content:center; display:flex;">hotovo</p>
+      <h1 style="font-size:30px;">Kvásek je vykynutý 🍞</h1>
+      <p class="sub" id="doneSummary"></p>
+    </div>
+    <button class="primary" id="restartBtn">Nastavit nové kynutí</button>
+  </section>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const state = {
+    intervals: 8,
+    minutes: 25,
+    melodyKey: 'ode',
+    chimeLength: '5',
+    currentInterval: 1,
+    remainingMs: 0,
+    endTimestamp: null,
+    running: false,
+    paused: false,
+    tickHandle: null,
+    wakeLock: null,
+  };
+
+  const el = id => document.getElementById(id);
+  const setupScreen = el('setupScreen'), runScreen = el('runScreen'), doneScreen = el('doneScreen');
+
+  /* ---------- Real-world finish time ---------- */
+  function formatClockTime(date){
+    const h = String(date.getHours()).padStart(2,'0');
+    const m = String(date.getMinutes()).padStart(2,'0');
+    return h + ':' + m;
+  }
+  function describeFinish(finishDate){
+    const now = new Date();
+    const sameDay = finishDate.getFullYear()===now.getFullYear()
+      && finishDate.getMonth()===now.getMonth()
+      && finishDate.getDate()===now.getDate();
+    const dayWord = sameDay ? 'dnes' : 'zítra';
+    return dayWord + ' v ' + formatClockTime(finishDate);
+  }
+
+  /* ---------- Setup chips ---------- */
+  const intervalOptions = [5,6,7,8,9,10];
+  const chimeOptions = [ ['3','3 s'], ['5','5 s'], ['10','10 s'], ['20','20 s'] ];
+
+  function buildChips(container, options, current, onPick){
+    container.innerHTML = '';
+    options.forEach(v=>{
+      const c = document.createElement('div');
+      c.className = 'chip' + (v===current ? ' active' : '');
+      c.textContent = v;
+      c.addEventListener('click', ()=> onPick(v));
+      container.appendChild(c);
+    });
+  }
+
+  function refreshIntervalChips(){
+    buildChips(el('intervalChips'), intervalOptions, state.intervals, v=>{
+      state.intervals = v;
+      el('intervalsCustom').value = '';
+      renderSetup();
+    });
+  }
+
+  function refreshMelodyChips(){
+    const container = el('melodyChips');
+    container.innerHTML = '';
+    Object.keys(MELODIES).forEach(key=>{
+      const c = document.createElement('div');
+      c.className = 'chip' + (key===state.melodyKey ? ' active' : '');
+      c.textContent = MELODIES[key].name;
+      c.addEventListener('click', ()=>{
+        state.melodyKey = key;
+        renderSetup();
+        getCtx(); playChime(false);
+      });
+      container.appendChild(c);
+    });
+  }
+
+  function refreshChimeChips(){
+    const container = el('chimeChips');
+    container.innerHTML = '';
+    chimeOptions.forEach(([value, label])=>{
+      const c = document.createElement('div');
+      c.className = 'chip' + (value===state.chimeLength ? ' active' : '');
+      c.textContent = label;
+      c.addEventListener('click', ()=>{
+        state.chimeLength = value;
+        renderSetup();
+        // quick preview so the user can hear the difference right away
+        getCtx(); playChime(false);
+      });
+      container.appendChild(c);
+    });
+  }
+
+  function renderSetup(){
+    refreshIntervalChips();
+    refreshMelodyChips();
+    refreshChimeChips();
+    el('intervalsVal').textContent = state.intervals;
+    el('minutesVal').textContent = state.minutes + ' min';
+    el('melodyVal').textContent = MELODIES[state.melodyKey].name;
+    el('chimeVal').textContent = state.chimeLength + ' s';
+    el('minutesSlider').value = Math.max(5, Math.min(120, Math.round(state.minutes/5)*5));
+    const totalMin = state.intervals * state.minutes;
+    const h = Math.floor(totalMin/60), m = totalMin%60;
+    const totalTxt = h>0 ? (h+' h '+ (m>0? m+' min':'')) : (m+' min');
+    el('summaryLine').innerHTML = 'Celkem <b>'+state.intervals+'×</b> po <b>'+state.minutes+' min</b> — dohromady zhruba <b>'+totalTxt.trim()+'</b>.';
+
+    const finishDate = new Date(Date.now() + totalMin*60*1000);
+    el('finishLine').textContent = 'Když spustíš teď, hotovo bude ' + describeFinish(finishDate) + '.';
+  }
+
+  el('intervalsCustom').addEventListener('input', e=>{
+    const v = parseInt(e.target.value, 10);
+    if(v>0 && v<=60){ state.intervals = v; }
+    renderSetup();
+    // keep the field usable while typing
+    if(document.activeElement === el('intervalsCustom')) el('intervalsCustom').value = e.target.value;
+  });
+
+  el('minutesSlider').addEventListener('input', e=>{
+    state.minutes = parseInt(e.target.value, 10);
+    el('minutesCustom').value = '';
+    renderSetup();
+  });
+
+  el('minutesCustom').addEventListener('input', e=>{
+    const v = parseFloat(e.target.value);
+    if(v>0 && v<=999){ state.minutes = v; }
+    renderSetup();
+    if(document.activeElement === el('minutesCustom')) el('minutesCustom').value = e.target.value;
+  });
+
+  /* ---------- Sound: pleasant generated chime ---------- */
+  let audioCtx = null;
+  function getCtx(){
+    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+  // Krátké, zjednodušené úryvky ze skladeb starých přes 100 let — jde o volná díla.
+  // Noty se generují živě přes Web Audio, nejde o žádnou nahrávku.
+  const NOTE_FREQ = {
+    C4:261.63, 'C#4':277.18, D4:293.66, 'D#4':311.13, E4:329.63, F4:349.23, 'F#4':369.99,
+    G4:392.00, 'G#4':415.30, A4:440.00, 'A#4':466.16, B4:493.88,
+    C5:523.25, 'C#5':554.37, D5:587.33, 'D#5':622.25, E5:659.25, F5:698.46, 'F#5':739.99,
+    G5:783.99, 'G#5':830.61, A5:880.00, B5:987.77, C6:1046.50
+  };
+
+  const ODE_TO_JOY = [ // Beethoven — Óda na radost (9. symfonie)
+    ['E4',1],['E4',1],['F4',1],['G4',1],
+    ['G4',1],['F4',1],['E4',1],['D4',1],
+    ['C4',1],['C4',1],['D4',1],['E4',1],
+    ['E4',1.5],['D4',0.5],['D4',2]
+  ];
+  const FUR_ELISE = [ // Beethoven — Pro Elišku (úvodní motiv)
+    ['E5',0.5],['D#5',0.5],['E5',0.5],['D#5',0.5],['E5',0.5],['B4',0.5],['D5',0.5],['C5',0.5],['A4',1.5]
+  ];
+  const LULLABY = [ // Brahms — Ukolébavka (Wiegenlied)
+    ['G4',0.5],['E4',0.5],['G4',0.5],['C5',1],['D5',0.5],['E5',1.5],
+    ['C5',0.5],['A4',0.5],['F4',0.5],['A4',1],['C5',0.5],['D5',1.5]
+  ];
+  const NACHTMUSIK = [ // Mozart — Malá noční hudba (úvod)
+    ['G4',0.5],['D5',0.5],['G4',0.5],['D5',0.5],['B4',0.5],['G4',0.5],['D4',1],
+    ['G4',0.5],['A4',0.5],['B4',0.5],['C5',0.5],['D5',2]
+  ];
+  const AIR_G = [ // Bach — Air (na strunu G)
+    ['C5',1],['B4',1],['A4',1],['G4',1],['F4',1],['E4',1],['D4',1],['C4',2]
+  ];
+  const CANON = [ // Pachelbel — Kánon D dur (melodická linka)
+    ['C5',1],['G4',1],['A4',1],['E4',1],['F4',1],['C4',1],['F4',1],['G4',1.5]
+  ];
+  const BELLA_CIAO = [ // Bella ciao — italská lidová/protestní píseň (tradiční, autor neznámý)
+    ['A4',0.5],['A4',0.5],['G4',0.5],['F4',0.5],['E4',1],
+    ['F4',0.5],['G4',0.5],['E4',1],
+    ['A4',0.5],['A4',0.5],['G4',0.5],['F4',0.5],['E4',1.5]
+  ];
+  const SWING_LOW = [ // Swing Low, Sweet Chariot — tradiční spirituál (autor neznámý)
+    ['G4',0.5],['B4',0.5],['D5',1],['B4',0.5],['G4',1],
+    ['E4',0.5],['G4',1.5],
+    ['G4',0.5],['B4',0.5],['D5',1],['B4',0.5],['G4',1.5]
+  ];
+  const DRUNKEN_SAILOR = [ // What Shall We Do with the Drunken Sailor — tradiční námořnická pracovní píseň (shanty)
+    ['E5',0.5],['G4',0.5],['A4',0.5],['B4',0.5],['C5',0.5],['B4',0.5],['A4',0.5],['G4',1],
+    ['E5',0.5],['G4',0.5],['A4',0.5],['B4',0.5],['C5',0.5],['B4',0.5],['A4',1],['G4',1.5]
+  ];
+
+  const MELODIES = {
+    ode:        { name: 'Óda na radost',      notes: ODE_TO_JOY },
+    elise:      { name: 'Pro Elišku',          notes: FUR_ELISE },
+    lullaby:    { name: 'Ukolébavka',          notes: LULLABY },
+    nachtmusik: { name: 'Malá noční hudba',    notes: NACHTMUSIK },
+    air:        { name: 'Air (Bach)',          notes: AIR_G },
+    canon:      { name: 'Kánon D dur',         notes: CANON },
+    bellaciao:  { name: 'Bella ciao',          notes: BELLA_CIAO },
+    swinglow:   { name: 'Swing Low',           notes: SWING_LOW },
+    sailor:     { name: 'Opilý námořník',      notes: DRUNKEN_SAILOR },
+  };
+
+  function getChimePlan(){
+    // 3s: jen první fráze zvolené melodie. 5s: celá jednou. 10s: celá dvakrát. 20s: celá čtyřikrát.
+    const melody = MELODIES[state.melodyKey].notes;
+    switch(state.chimeLength){
+      case '3':  return { notes: melody.slice(0, Math.min(8, melody.length)), beatSec: 0.34, baseRepeats: 1 };
+      case '10': return { notes: melody, beatSec: 0.3, baseRepeats: 2 };
+      case '20': return { notes: melody, beatSec: 0.3, baseRepeats: 4 };
+      default:   return { notes: melody, beatSec: 0.3, baseRepeats: 1 };
+    }
+  }
+
+  function playChime(final){
+    try{
+      const ctx = getCtx();
+      const master = ctx.createGain();
+      master.gain.value = 1.0;
+      master.connect(ctx.destination);
+
+      const plan = getChimePlan();
+      const notes = plan.notes;
+      const beatSec = plan.beatSec;
+      const repeats = final ? plan.baseRepeats + 1 : plan.baseRepeats;
+      let t = ctx.currentTime + 0.03;
+
+      for(let r=0; r<repeats; r++){
+        let cursor = t;
+        notes.forEach(([note, beats])=>{
+          const freq = NOTE_FREQ[note];
+          const dur = beats * beatSec;
+          const start = cursor;
+          const noteLength = dur * 1.15; // slight overlap/ring between notes
+
+          // Melody voice (warm triangle wave, bell-like)
+          const layers = final
+            ? [ [freq, 0.55, 'triangle'], [freq*2, 0.16, 'sine'], [freq/2, 0.22, 'sine'] ]
+            : [ [freq, 0.5, 'triangle'], [freq*2, 0.14, 'sine'] ];
+
+          layers.forEach(([f, level, type])=>{
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = type;
+            osc.frequency.value = f;
+            gain.gain.setValueAtTime(0, start);
+            gain.gain.linearRampToValueAtTime(level, start + 0.03);
+            gain.gain.exponentialRampToValueAtTime(0.0001, start + noteLength);
+            osc.connect(gain).connect(master);
+            osc.start(start);
+            osc.stop(start + noteLength + 0.05);
+          });
+
+          cursor += dur;
+        });
+        t = cursor + 0.4;
+      }
+    }catch(e){ /* audio unavailable, ignore */ }
+    if(navigator.vibrate) navigator.vibrate(final ? [160,90,160,90,160,90,400] : [160,90,160,90,160]);
+  }
+
+  /* ---------- Wake lock ---------- */
+  async function requestWakeLock(){
+    try{
+      if('wakeLock' in navigator){
+        state.wakeLock = await navigator.wakeLock.request('screen');
+      }
+    }catch(e){ /* not supported / denied, ignore */ }
+  }
+  function releaseWakeLock(){
+    if(state.wakeLock){ state.wakeLock.release().catch(()=>{}); state.wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible' && state.running && !state.paused) requestWakeLock();
+  });
+
+  /* ---------- Toast ---------- */
+  let toastTimer = null;
+  function showToast(msg){
+    const t = el('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=> t.classList.remove('show'), 2200);
+  }
+
+  /* ---------- Jar visual ---------- */
+  function setJarBubbles(count){
+    const jar = el('jar');
+    jar.querySelectorAll('.bubble').forEach(b=>b.remove());
+    for(let i=0;i<count;i++){
+      const b = document.createElement('div');
+      b.className = 'bubble';
+      const left = 22 + Math.random()*120;
+      b.style.left = left+'px';
+      b.style.animationDelay = (Math.random()*4)+'s';
+      b.style.animationDuration = (3.4 + Math.random()*2)+'s';
+      jar.appendChild(b);
+    }
+  }
+  function setJarFill(fraction){
+    // Interior clip spans y=40 (shoulder) to y=192 (bottom) in SVG units -> max liquid height 152.
+    const maxH = 152;
+    const minH = 6;
+    const h = Math.max(minH, Math.min(maxH, fraction * maxH));
+    const y = 192 - h;
+    const rect = el('jarFillRect');
+    rect.setAttribute('height', h);
+    rect.setAttribute('y', y);
+    const sheen = el('jarFillSheen');
+    sheen.setAttribute('y', y);
+  }
+
+  /* ---------- Timer core ---------- */
+  function fmt(ms){
+    const totalSec = Math.max(0, Math.ceil(ms/1000));
+    const m = Math.floor(totalSec/60);
+    const s = totalSec % 60;
+    return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+  }
+
+  function startInterval(intervalNum){
+    state.currentInterval = intervalNum;
+    const durMs = state.minutes * 60 * 1000;
+    state.remainingMs = durMs;
+    state.endTimestamp = Date.now() + durMs;
+    el('intervalPill').textContent = 'Interval ' + intervalNum + ' z ' + state.intervals;
+    el('timerDisplay').textContent = fmt(durMs);
+    el('progressFill').style.width = '0%';
+    setJarFill(0);
+    tick();
+  }
+
+  function tick(){
+    if(!state.running || state.paused) return;
+    const now = Date.now();
+    const remaining = state.endTimestamp - now;
+    const durMs = state.minutes*60*1000;
+    if(remaining <= 0){
+      el('timerDisplay').textContent = '00:00';
+      el('progressFill').style.width = '100%';
+      setJarFill(1);
+      onIntervalComplete();
+      return;
+    }
+    el('timerDisplay').textContent = fmt(remaining);
+    const frac = 1 - (remaining/durMs);
+    el('progressFill').style.width = (frac*100).toFixed(1)+'%';
+    setJarFill(frac);
+
+    const intervalsLeftAfterThis = state.intervals - state.currentInterval;
+    const finishDate = new Date(now + remaining + intervalsLeftAfterThis * state.minutes * 60 * 1000);
+    el('runFinishLine').textContent = 'Hotovo ' + describeFinish(finishDate) + '.';
+
+    state.tickHandle = setTimeout(tick, 200);
+  }
+
+  function onIntervalComplete(){
+    const isFinal = state.currentInterval >= state.intervals;
+    playChime(isFinal);
+    const disp = el('timerDisplay');
+    disp.classList.add('pulse');
+    setTimeout(()=>disp.classList.remove('pulse'), 650);
+
+    if(isFinal){
+      finish();
+    }else{
+      showToast('Interval ' + state.currentInterval + ' hotový — pokračuje se');
+      setTimeout(()=>{
+        if(state.running) startInterval(state.currentInterval + 1);
+      }, 1800);
+    }
+  }
+
+  function finish(){
+    state.running = false;
+    releaseWakeLock();
+    const totalMin = state.intervals * state.minutes;
+    const h = Math.floor(totalMin/60), m = totalMin%60;
+    const totalTxt = (h>0 ? h+' h ' : '') + (m>0 || h===0 ? m+' min' : '');
+    el('doneSummary').textContent = 'Dokončil jsi ' + state.intervals + ' intervalů po ' + state.minutes + ' minutách — celkem ' + totalTxt.trim() + '. Hotovo ' + formatClockTime(new Date()) + '.';
+    showScreen(doneScreen);
+  }
+
+  function showScreen(target){
+    [setupScreen, runScreen, doneScreen].forEach(s=> s.classList.remove('active'));
+    target.classList.add('active');
+  }
+
+  /* ---------- Controls ---------- */
+  el('startBtn').addEventListener('click', ()=>{
+    getCtx(); // unlock audio on user gesture
+    state.running = true;
+    state.paused = false;
+    setJarBubbles(10);
+    requestWakeLock();
+    showScreen(runScreen);
+    startInterval(1);
+  });
+
+  el('pauseBtn').addEventListener('click', ()=>{
+    if(!state.running) return;
+    if(!state.paused){
+      state.paused = true;
+      state.remainingMs = state.endTimestamp - Date.now();
+      clearTimeout(state.tickHandle);
+      el('pauseBtn').textContent = 'Pokračovat';
+      releaseWakeLock();
+    }else{
+      state.paused = false;
+      state.endTimestamp = Date.now() + state.remainingMs;
+      el('pauseBtn').textContent = 'Pauza';
+      requestWakeLock();
+      tick();
+    }
+  });
+
+  el('stopBtn').addEventListener('click', ()=>{
+    clearTimeout(state.tickHandle);
+    state.running = false;
+    state.paused = false;
+    el('pauseBtn').textContent = 'Pauza';
+    releaseWakeLock();
+    showScreen(setupScreen);
+    renderSetup();
+  });
+
+  el('restartBtn').addEventListener('click', ()=>{
+    showScreen(setupScreen);
+    renderSetup();
+  });
+
+  renderSetup(); // initial paint — runs after everything above (MELODIES etc.) is defined
+
+})();
+</script>
+</body>
+</html>
